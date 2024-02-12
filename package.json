@@ -1,0 +1,15 @@
+{
+  "name": "spotify-parser",
+  "version": "1.0.0",
+  "description": "parses provided spotify url to a query that can be searched in yt-dlp",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Michał Czyż",
+  "license": "ISC",
+  "dependencies": {
+    "isomorphic-unfetch": "^4.0.2",
+    "spotify-url-info": "^3.2.13"
+  }
+}
