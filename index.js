@@ -1,29 +1,32 @@
-const fetch = require('isomorphic-unfetch')
-const Spotify = require("spotify-url-info")
+import fetch from 'isomorphic-unfetch'
+import Spotify from 'spotify-url-info'
+
 const {getData, getPreview} = Spotify(fetch)
+const spotifyRegex = /https?:\/\/(?:embed\.|open\.)(?:spotify\.com\/)(?:track\/|\?uri=spotify:track:)((\w|-)+)(?:(?=\?)(?:[?&]foo=(\d*)(?=[&#]|$)|(?![?&]foo=)[^#])+)?(?=#|$)/
+const spotifyPlaylistRegex = /https?:\/\/(?:embed\.|open\.)(?:spotify\.com\/)(?:(album|playlist)\/|\?uri=spotify:playlist:)((\w|-)+)(?:(?=\?)(?:[?&]foo=(\d*)(?=[&#]|$)|(?![?&]foo=)[^#])+)?(?=#|$)/
 
-let spotufy_regex = /https?:\/\/(?:embed\.|open\.)(?:spotify\.com\/)(?:track\/|\?uri=spotify:track:)((\w|-)+)(?:(?=\?)(?:[?&]foo=(\d*)(?=[&#]|$)|(?![?&]foo=)[^#])+)?(?=#|$)/
-let isUrl = false
-let url = ""
+const parse = async url => {
+  let isSpotifySong = spotifyRegex.test(url)
+  let isSpotifyPlaylist = spotifyPlaylistRegex.test(url)
+  
+  if (isSpotifySong === isSpotifyPlaylist)
+    return
+  
+  if (isSpotifyPlaylist) {
+    let spotifyResultData = await getData(url).catch(() => null)
+    if (!spotifyResultData || !['playlist', 'album'].includes(spotifyResultData.type))
+      return
+    
+    for (const spotifyResult of spotifyResultData.trackList) {
+      console.log(`${spotifyResult.subtitle} - ${spotifyResult.title}`)
+    }
 
-process.argv.forEach(val => {
-  if (isUrl) {
-    url = val
+    return
   }
-  if (val == "--url") {
-    isUrl = true
-  }
-})
 
-let spotifyLink = spotufy_regex.test(url)
-if (!spotifyLink) {
-  console.error("invalid url")
-  return
+  let spotifyResult = await getPreview(url) 
+  console.log(`${spotifyResult.artist} - ${spotifyResult.title}`)
 }
 
-const parser = async () => {
-  let spotifyResult = await getPreview(url)
-  console.log(spotifyResult.artist, " - ", spotifyResult.title)
-}
-
-parser()
+let url = process.argv[process.argv.length - 1]
+parse(url)

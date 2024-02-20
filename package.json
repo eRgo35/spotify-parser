@@ -1,6 +1,7 @@
 {
   "name": "spotify-parser",
   "version": "1.0.0",
+  "type": "module",
   "description": "parses provided spotify url to a query that can be searched in yt-dlp",
   "main": "index.js",
   "scripts": {
