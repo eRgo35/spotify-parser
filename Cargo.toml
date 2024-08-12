@@ -1,7 +1,13 @@
 [package]
-name = "lib-spotify-parser"
+name = "spotify-parser"
+description = "A library for parsing Spotify data."
 version = "1.0.0"
 edition = "2021"
+license-file = "LICENSE.md"
+repository = "https://github.com/eRgo35/spotify-parser"
+readme = "README.md"
+keywords = ["spotify", "parser", "embed", "library"]
+categories = ["parsing"]
 
 [dependencies]
 regex = "1.10.6"
