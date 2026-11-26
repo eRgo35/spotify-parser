@@ -1,8 +1,9 @@
 [package]
 name = "spotify-parser"
 description = "A library for parsing Spotify data."
-version = "1.0.2"
+version = "1.1.0"
 edition = "2021"
+rust-version = "1.80"
 license-file = "LICENSE.md"
 repository = "https://github.com/eRgo35/spotify-parser"
 readme = "README.md"
@@ -15,4 +16,6 @@ reqwest = { version = "0.12.5", default-features = false, features = ["blocking"
 scraper = "0.19.1"
 serde = "1.0.204"
 serde_json = "1.0.122"
-tokio = { version = "1.39.2", features = ["macros"] }
+
+[dev-dependencies]
+tokio = { version = "1.39.2", features = ["macros", "rt"] }

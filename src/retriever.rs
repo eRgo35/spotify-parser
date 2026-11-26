@@ -1,85 +1,58 @@
-use crate::*;
+use std::sync::LazyLock;
+use std::time::Duration;
 
-pub fn retrieve_track(category: &str, id: &str) -> Result<String, String> {
-    let embed_url = format!("https://embed.spotify.com/?uri=spotify:{}:{}", category, id);
+use crate::error::ParseError;
+use crate::parser::{parse_list, parse_single, SpotifyTrack, USER_AGENT};
 
-    let client = reqwest::blocking::Client::builder()
-        .use_rustls_tls()
-        .user_agent(USER_AGENT)
-        .build()
-        .unwrap();
+/// A whole request (connect, headers and body) may take this long.
+const TIMEOUT: Duration = Duration::from_secs(15);
 
-    let response = client.get(&embed_url).send().unwrap();
-    let content = response.text().unwrap();
-
-    let parsed_content = parse_single(content).unwrap();
-
-    Ok(format!(
-        "{} - {}",
-        parsed_content.artist, parsed_content.title
-    ))
+fn embed_url(category: &str, id: &str) -> String {
+    format!("https://embed.spotify.com/?uri=spotify:{category}:{id}")
 }
 
-pub fn retrieve_tracks(category: &str, id: &str) -> Result<Vec<String>, String> {
-    let embed_url = format!("https://embed.spotify.com/?uri=spotify:{}:{}", category, id);
-
-    let client = reqwest::blocking::Client::builder()
-        .use_rustls_tls()
-        .user_agent(USER_AGENT)
-        .build()
-        .unwrap();
-
-    let response = client.get(&embed_url).send().unwrap();
-    let content = response.text().unwrap();
-
-    let parsed_content = parse_list(content).unwrap();
-
-    let tracks: Vec<String> = parsed_content
-        .iter()
-        .map(|track| format!("{} - {}", track.artist, track.title))
-        .collect();
-
-    Ok(tracks)
+/// The search queries in an embed page: one for a track, all of them for a list.
+fn queries(category: &str, content: &str) -> Result<Vec<String>, ParseError> {
+    let tracks = if category == "track" {
+        vec![parse_single(content)?]
+    } else {
+        parse_list(content)?
+    };
+    Ok(tracks.iter().map(SpotifyTrack::query).collect())
 }
 
-pub async fn retrieve_async_track(category: &str, id: &str) -> Result<String, String> {
-    let embed_url = format!("https://embed.spotify.com/?uri=spotify:{}:{}", category, id);
-
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .timeout(TIMEOUT)
         .build()
-        .unwrap();
+        .expect("HTTP client builds")
+});
 
-    let response = client.get(&embed_url).send().await.unwrap();
-    let content = response.text().await.unwrap();
+static BLOCKING_CLIENT: LazyLock<reqwest::blocking::Client> = LazyLock::new(|| {
+    reqwest::blocking::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(TIMEOUT)
+        .build()
+        .expect("HTTP client builds")
+});
 
-    let parsed_content = parse_single(content).unwrap();
-
-    Ok(format!(
-        "{} - {}",
-        parsed_content.artist, parsed_content.title
-    ))
+pub(crate) async fn retrieve_async(category: &str, id: &str) -> Result<Vec<String>, ParseError> {
+    let content = CLIENT
+        .get(embed_url(category, id))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    queries(category, &content)
 }
 
-pub async fn retrieve_async_tracks(category: &str, id: &str) -> Result<Vec<String>, String> {
-    let embed_url = format!("https://embed.spotify.com/?uri=spotify:{}:{}", category, id);
-
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .user_agent(USER_AGENT)
-        .build()
-        .unwrap();
-
-    let response = client.get(&embed_url).send().await.unwrap();
-    let content = response.text().await.unwrap();
-
-    let parsed_content = parse_list(content).unwrap();
-
-    let tracks: Vec<String> = parsed_content
-        .iter()
-        .map(|track| format!("{} - {}", track.artist, track.title))
-        .collect();
-
-    Ok(tracks)
+pub(crate) fn retrieve(category: &str, id: &str) -> Result<Vec<String>, ParseError> {
+    let content = BLOCKING_CLIENT
+        .get(embed_url(category, id))
+        .send()?
+        .error_for_status()?
+        .text()?;
+    queries(category, &content)
 }

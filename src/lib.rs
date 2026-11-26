@@ -1,57 +1,47 @@
+//! Track names (`Artist - Title`) from Spotify track, album and playlist URLs, read
+//! from Spotify's public embed pages. No API key is needed.
+
 mod error;
 mod parser;
 mod retriever;
 
-use error::ParseError;
-use parser::{parse_list, parse_single, USER_AGENT};
+use std::sync::LazyLock;
+
 use regex::Regex;
-use reqwest;
-use retriever::{retrieve_async_track, retrieve_async_tracks, retrieve_track, retrieve_tracks};
 
-pub fn retrieve_url(url: &str) -> Result<Vec<String>, ParseError> {
-    let spotify_regex: Regex = Regex::new(r"https?:\/\/(?:embed\.|open\.)spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)(?:\?si=[\w-]+)?").unwrap();
+pub use error::ParseError;
 
-    if let Some(captures) = spotify_regex.captures(url) {
-        let category = captures.get(1).unwrap().as_str();
-        let id = captures.get(2).unwrap().as_str();
+static SPOTIFY_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"https?://(?:embed\.|open\.)spotify\.com/(?:intl-[a-zA-Z-]+/)?(?:embed/)?(track|album|playlist)/([a-zA-Z0-9]+)",
+    )
+    .expect("valid regex")
+});
 
-        match category {
-            "track" => {
-                let track = retrieve_track(category, id).unwrap();
-                Ok(vec![track])
-            }
-            "playlist" | "album" => {
-                let tracks = retrieve_tracks(category, id).unwrap();
-                Ok(tracks)
-            }
-            _ => Err(ParseError::InvalidUrl),
-        }
-    } else {
-        Err(ParseError::InvalidUrl)
-    }
+/// The category (`track`, `album` or `playlist`) and ID in a Spotify URL.
+fn parse_url(url: &str) -> Result<(&str, &str), ParseError> {
+    let captures = SPOTIFY_URL.captures(url).ok_or(ParseError::InvalidUrl)?;
+    let category = captures.get(1).ok_or(ParseError::InvalidUrl)?.as_str();
+    let id = captures.get(2).ok_or(ParseError::InvalidUrl)?.as_str();
+    Ok((category, id))
 }
 
+/// `Artist - Title` for each track behind a Spotify URL (blocking).
+///
+/// Anything that is not a Spotify URL gives [`ParseError::InvalidUrl`] without a
+/// network request.
+pub fn retrieve_url(url: &str) -> Result<Vec<String>, ParseError> {
+    let (category, id) = parse_url(url)?;
+    retriever::retrieve(category, id)
+}
+
+/// `Artist - Title` for each track behind a Spotify URL.
+///
+/// Anything that is not a Spotify URL gives [`ParseError::InvalidUrl`] without a
+/// network request.
 pub async fn retrieve_async_url(url: &str) -> Result<Vec<String>, ParseError> {
-    let spotify_regex: Regex = Regex::new(r"https?:\/\/(?:embed\.|open\.)spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)(?:\?si=[\w-]+)?").unwrap();
-
-    if let Some(captures) = spotify_regex.captures(url) {
-        let category = captures.get(1).unwrap().as_str();
-        let id = captures.get(2).unwrap().as_str();
-
-        match category {
-            "track" => {
-                let track = retrieve_async_track(category, id).await.unwrap();
-                Ok(vec![track])
-            }
-            "playlist" | "album" => {
-                let tracks = retrieve_async_tracks(category, id).await.unwrap();
-                Ok(tracks)
-            }
-            _ => Err(ParseError::InvalidUrl),
-        }
-    } else {
-        Err(ParseError::InvalidUrl)
-    }
+    let (category, id) = parse_url(url)?;
+    retriever::retrieve_async(category, id).await
 }
 
 #[cfg(test)]
@@ -67,6 +57,40 @@ mod tests {
         "https://open.spotify.com/album/6eUW0wxWtzkFdaEFsTJto6?si=_grLtlNySNyfJTZr8tP44Q";
 
     #[test]
+    fn url_forms() {
+        assert_eq!(parse_url(TRACK), Ok(("track", "4PTG3Z6ehGkBFwjybzWkR8")));
+        assert_eq!(
+            parse_url("https://open.spotify.com/intl-pl/track/4PTG3Z6ehGkBFwjybzWkR8"),
+            Ok(("track", "4PTG3Z6ehGkBFwjybzWkR8"))
+        );
+        assert_eq!(
+            parse_url("https://open.spotify.com/intl-pt-BR/album/6eUW0wxWtzkFdaEFsTJto6"),
+            Ok(("album", "6eUW0wxWtzkFdaEFsTJto6"))
+        );
+        assert_eq!(
+            parse_url("https://open.spotify.com/embed/playlist/37i9dQZF1DZ06evO05tE88"),
+            Ok(("playlist", "37i9dQZF1DZ06evO05tE88"))
+        );
+        for not_spotify in [
+            "never gonna give you up",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://open.spotify.com/artist/0gxyHStUsqpMadRV0Di1Qt",
+        ] {
+            assert_eq!(parse_url(not_spotify), Err(ParseError::InvalidUrl));
+        }
+    }
+
+    #[tokio::test]
+    async fn not_spotify_is_invalid_without_a_request() {
+        assert_eq!(
+            retrieve_async_url("just some words").await,
+            Err(ParseError::InvalidUrl)
+        );
+    }
+
+    // The tests below fetch from Spotify.
+
+    #[test]
     fn check_track() {
         let track: Vec<&str> = vec!["Rick Astley - Never Gonna Give You Up"];
         assert_eq!(retrieve_url(TRACK).unwrap(), track);
@@ -78,61 +102,15 @@ mod tests {
         assert_eq!(retrieve_url(MULTIPLE_ARTISTS_TRACK).unwrap(), track);
     }
 
-    #[test]
-    fn check_playlist() {
-        let playlist: Vec<&str> = vec![
-            "Rick Astley - Never Gonna Give You Up",
-            "Rick Astley - Take Me to Your Heart (2023 Remaster)",
-            "Rick Astley - Cry for Help - Single Edit",
-            "Rick Astley - Never Gonna Stop",
-            "Rick Astley - Together Forever",
-            "Rick Astley - Hold Me in Your Arms (7\" Version)",
-            "Rick Astley - Angels on My Side",
-            "New Kids On The Block, Salt-N-Pepa, Rick Astley, En Vogue - Bring Back The Time",
-            "Rick Astley - Whenever You Need Somebody",
-            "Rick Astley - She Wants to Dance with Me (2023 Remaster)",
-            "Rick Astley - Dippin My Feet",
-            "Rick Astley - My Arms Keep Missing You",
-            "Rick Astley - Don't Say Goodbye",
-            "Rick Astley - Dance",
-            "Rick Astley - Giving Up On Love (7'' Pop Version)",
-            "Rick Astley - Never Gonna Give You Up (Cake Mix)",
-            "Rick Astley - It Would Take a Strong Strong Man",
-            "Rick Astley - Driving Me Crazy",
-            "Rick Astley - Beautiful Life",
-            "Rick Astley - I Don't Want to Lose Her",
-            "Rick Astley - Keep Singing",
-            "Rick Astley - Forever and More",
-            "Rick Astley - Hopelessly",
-            "Rick Astley - When I Fall in Love",
-            "Rick Astley - Every One of Us",
-            "Rick Astley - High Enough",
-            "Rick Astley - Ain't Too Proud to Beg (2023 Remaster)",
-            "Rick Astley - I'll Never Let You Down",
-            "Trevor Horn, Rick Astley - Owner Of A Lonely Heart",
-            "Rick Astley - Letting Go",
-            "Rick Astley - Never Knew Love",
-            "Rick Astley - Lights Out - Radio Edit",
-            "Rick Astley - Try",
-            "Rick Astley - Dial My Number (2023 Remaster)",
-            "Rick Astley - Wish Away",
-            "Rick Astley - Giant",
-            "Rick Astley - Move Right Out",
-            "Rick Astley - Till Then (Time Stands Still) (2023 Remaster)",
-            "Rick Astley - Pray with Me",
-            "Rick Astley - I Don't Want to Be Your Lover",
-            "Will o' the wisp, Rick Astley - Blood on My Tie",
-            "Rick Astley - Can't Help Falling in Love",
-            "Rick Astley - I Like the Sun",
-            "Rick Astley - She Makes Me",
-            "Rick Astley - Body and Soul",
-            "Rick Astley - (They Long to Be) Close to You",
-            "Rick Astley - Unwanted (Official Song from the Podcast)",
-            "Rick Astley - Last Night on Earth",
-            "Rick Astley - Everlong - Acoustic Version",
-            "Rick Astley - Superman",
-        ];
-        assert_eq!(retrieve_url(PLAYLIST).unwrap(), playlist);
+    #[tokio::test]
+    async fn check_playlist() {
+        // A generated playlist: its tracks change, so only the shape is checked.
+        let tracks = retrieve_async_url(PLAYLIST).await.unwrap();
+        assert!(tracks.len() >= 10, "{tracks:?}");
+        assert!(tracks
+            .iter()
+            .all(|t| t.contains(" - ") && !t.contains("&nbsp;")));
+        assert!(tracks.iter().any(|t| t.contains("Rick Astley")));
     }
 
     #[test]
